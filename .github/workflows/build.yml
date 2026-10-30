@@ -44,7 +44,7 @@ jobs:
           # wllama (llama.cpp WASM) - APK icine qoyulur ki, internetsiz isleyi
           mkdir -p $P/node && cd $P/node
           npm init -y > /dev/null
-          npm install @wllama/wllama
+          npm install "@wllama/wllama@^2"
           cd $GITHUB_WORKSPACE
           test -f $P/node/node_modules/@wllama/wllama/esm/index.js
           cp -r $P/node/node_modules/@wllama/wllama/esm $A/wllama
@@ -175,3 +175,4 @@ jobs:
           tag_name: V1
           name: aiofflinE V1
           files: aiofflinEV1.apk
+          
