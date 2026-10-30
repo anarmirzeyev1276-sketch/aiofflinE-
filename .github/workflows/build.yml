@@ -1,0 +1,177 @@
+name: Build aiofflinE APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.5'
+
+      - name: Generate Android project
+        run: |
+          set -e
+          test -f index.html || { echo "index.html tapilmadi"; exit 1; }
+          test -f logo.jpg || { echo "logo.jpg tapilmadi"; exit 1; }
+          sudo apt-get install -y imagemagick > /dev/null
+          P=$PWD/proj
+          J=$P/app/src/main/java/com/aioffline/app
+          A=$P/app/src/main/assets
+          R=$P/app/src/main/res
+          mkdir -p $J $A
+
+          cp index.html $A/index.html
+
+          # wllama (llama.cpp WASM) - APK icine qoyulur ki, internetsiz isleyi
+          mkdir -p $P/node && cd $P/node
+          npm init -y > /dev/null
+          npm install @wllama/wllama
+          cd $GITHUB_WORKSPACE
+          test -f $P/node/node_modules/@wllama/wllama/esm/index.js
+          cp -r $P/node/node_modules/@wllama/wllama/esm $A/wllama
+
+          # logo.jpg -> kvadrat APK ikonlari
+          for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
+            n=${d%%:*}; s=${d##*:}
+            mkdir -p $R/mipmap-$n
+            convert logo.jpg -resize ${s}x${s}^ -gravity center -extent ${s}x${s} $R/mipmap-$n/ic_launcher.png
+          done
+
+          cat > $P/settings.gradle <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories { google(); mavenCentral() }
+          }
+          rootProject.name = 'aiofflinE'
+          include ':app'
+          EOF
+
+          cat > $P/build.gradle <<'EOF'
+          plugins { id 'com.android.application' version '8.2.2' apply false }
+          EOF
+
+          cat > $P/gradle.properties <<'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2g
+          EOF
+
+          cat > $P/app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+            namespace 'com.aioffline.app'
+            compileSdk 34
+            defaultConfig {
+              applicationId 'com.aioffline.app'
+              minSdk 24
+              targetSdk 34
+              versionCode 1
+              versionName '1.0'
+            }
+            compileOptions {
+              sourceCompatibility JavaVersion.VERSION_17
+              targetCompatibility JavaVersion.VERSION_17
+            }
+          }
+          dependencies { implementation 'androidx.webkit:webkit:1.8.0' }
+          EOF
+
+          cat > $P/app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.INTERNET"/>
+            <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+            <application
+              android:label="aiofflinE"
+              android:icon="@mipmap/ic_launcher"
+              android:largeHeap="true"
+              android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+              <activity
+                android:name=".MainActivity"
+                android:exported="true"
+                android:configChanges="orientation|screenSize|keyboardHidden"
+                android:windowSoftInputMode="adjustResize">
+                <intent-filter>
+                  <action android:name="android.intent.action.MAIN"/>
+                  <category android:name="android.intent.category.LAUNCHER"/>
+                </intent-filter>
+              </activity>
+            </application>
+          </manifest>
+          EOF
+
+          cat > $J/MainActivity.java <<'EOF'
+          package com.aioffline.app;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebResourceResponse;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import androidx.webkit.WebViewAssetLoader;
+
+          public class MainActivity extends Activity {
+            private WebView wv;
+
+            @Override
+            protected void onCreate(Bundle b) {
+              super.onCreate(b);
+              wv = new WebView(this);
+              wv.setBackgroundColor(0xFF0D0F0E);
+              setContentView(wv);
+              WebSettings s = wv.getSettings();
+              s.setJavaScriptEnabled(true);
+              s.setDomStorageEnabled(true);
+              s.setDatabaseEnabled(true);
+              final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
+                .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+                .build();
+              wv.setWebViewClient(new WebViewClient() {
+                @Override
+                public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
+                  return loader.shouldInterceptRequest(r.getUrl());
+                }
+              });
+              wv.loadUrl("https://appassets.androidplatform.net/assets/index.html");
+            }
+          }
+          EOF
+
+      - name: Build APK
+        run: |
+          cd proj
+          gradle assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../aiofflinEV1.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aiofflinEV1
+          path: aiofflinEV1.apk
+
+      - name: Release V1
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: V1
+          name: aiofflinE V1
+          files: aiofflinEV1.apk
