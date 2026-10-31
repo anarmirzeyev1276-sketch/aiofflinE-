@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="az"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>aiofflinE</title>
+<style>
+:root{--bg:#0d0f0e;--card:#171a19;--g:#2dff8a;--t:#e8fff1;--m:#7c8f84;--l:#22302a}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--t);font-family:system-ui,sans-serif}
+body{display:flex;flex-direction:column}
+header{padding:10px 12px;border-bottom:1px solid var(--l)}
+h1{font-size:18px;margin:0 0 8px;color:var(--g)}
+#models{display:flex;flex-wrap:wrap;gap:8px;max-height:34vh;overflow-y:auto}
+.m{flex:1 1 140px;background:var(--card);border:1px solid var(--l);border-radius:12px;padding:8px 10px;font-size:13px}
+.m.on{border-color:var(--g);box-shadow:0 0 8px #2dff8a55}
+.m small{display:block;color:var(--m);margin-top:2px}
+.bar{height:4px;background:var(--l);border-radius:2px;margin-top:6px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--g)}
+#chat{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}
+.b{max-width:82%;padding:9px 12px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word;font-size:15px}
+.u{align-self:flex-start;background:#223029}
+.a{align-self:flex-end;background:#12301f;border:1px solid #1d5a38}
+.e{align-self:center;background:#3a1414;border:1px solid #a33;color:#ffb4b4;text-align:center}
+form{display:flex;gap:8px;padding:10px;padding-bottom:calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--l)}
+input{flex:1;min-width:0;background:var(--card);border:1px solid var(--l);border-radius:20px;color:var(--t);padding:10px 14px;font-size:15px;outline:none}
+button{background:var(--g);color:#04130a;border:0;border-radius:20px;padding:0 18px;font-weight:700}
+.tabs{display:flex;gap:8px;margin-bottom:8px}
+.tabs span{padding:6px 14px;border-radius:16px;background:var(--card);font-size:13px;color:var(--m)}
+.tabs .on{background:var(--g);color:#04130a;font-weight:700}
+#img{display:none;flex:1;overflow-y:auto;padding:12px}
+#img input{width:100%}
+.st{font-size:13px;color:var(--m);margin:10px 0 6px}.st.e{color:#ffb4b4}
+canvas{width:100%;max-width:512px;border-radius:12px;margin-top:10px;background:var(--card)}
+.clip{display:flex;align-items:center;font-size:22px;padding:0 4px}
+#prev{padding:0 12px;font-size:12px;color:var(--g)}
+</style></head>
+<body>
+<header><h1>aiofflinE <small style="font-size:11px;color:#7c8f84">V1.1</small></h1><div class="tabs"><span id="t1" class="on">Chat</span><span id="t2">Şəkil çək</span></div><div id="models"></div></header>
+<div id="chat"></div>
+<div id="img"><input id="ip" placeholder="Yazı (ingiliscə daha yaxşı): a cat in space"><button id="ib" type="button" style="margin-top:8px;padding:10px 18px">Çək</button>
+<div id="is" class="st">İlk dəfə ~2.5 GB endirilir, sonra internetsiz işləyir. WebGPU lazımdır.</div><div class="bar"><i id="ibar"></i></div><canvas id="cv" width="512" height="512"></canvas></div>
+<div id="prev"></div>
+<form><label class="clip">📎<input id="file" type="file" accept="image/*" hidden></label><input id="msg" placeholder="Yaz..." autocomplete="off"><button>Göndər</button></form>
+<script type="module">
+import {Wllama} from './wllama/index.js';
+const HF='https://huggingface.co/';
+const MODELS=[
+ {id:'gemma3',name:'Gemma 3 1B (Gemini)',size:'~0.8 GB',url:HF+'unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf'},
+ {id:'gemma2',name:'Gemma 2 2B (Gemini)',size:'~1.6 GB',url:HF+'bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf'},
+ {id:'deepseek',name:'DeepSeek R1 1.5B',size:'~1.1 GB',url:HF+'bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf'},
+ {id:'qwen05',name:'Qwen 2.5 0.5B',size:'~0.4 GB',url:HF+'Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf'},
+ {id:'qwen15',name:'Qwen 2.5 1.5B',size:'~1.1 GB',url:HF+'Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf'},
+ {id:'qwencoder',name:'Qwen 2.5 Coder 0.5B',size:'~0.4 GB',url:HF+'Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf'},
+ {id:'llama',name:'Llama 3.2 1B',size:'~0.8 GB',url:HF+'bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf'},
+ {id:'smollm2',name:'SmolLM2 1.7B',size:'~1.1 GB',url:HF+'bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Q4_K_M.gguf'}
+ ,{id:'gr1',name:'IBM Granite 3.1 1B-A400M',size:'~0.8 GB',url:HF+'bartowski/granite-3.1-1b-a400m-instruct-GGUF/resolve/main/granite-3.1-1b-a400m-instruct-Q4_K_M.gguf'}
+ ,{id:'gr2',name:'IBM Granite 3.1 2B',size:'~1.6 GB',url:HF+'bartowski/granite-3.1-2b-instruct-GGUF/resolve/main/granite-3.1-2b-instruct-Q4_K_M.gguf'}
+ ,{id:'gr3',name:'IBM Granite 3.1 3B-A800M',size:'~2 GB',url:HF+'bartowski/granite-3.1-3b-a800m-instruct-GGUF/resolve/main/granite-3.1-3b-a800m-instruct-Q4_K_M.gguf'}
+ ,{id:'gr4',name:'IBM Granite 3.0 2B',size:'~1.6 GB',url:HF+'bartowski/granite-3.0-2b-instruct-GGUF/resolve/main/granite-3.0-2b-instruct-Q4_K_M.gguf'}
+ ,{id:'phi35',name:'Microsoft Phi-3.5 mini',size:'~2.4 GB',url:HF+'bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf'}
+ ,{id:'phi3',name:'Microsoft Phi-3 mini 4k',size:'~2.2 GB',url:HF+'microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf'}
+ ,{id:'phi31',name:'Microsoft Phi-3.1 mini 128k',size:'~2.4 GB',url:HF+'bartowski/Phi-3.1-mini-128k-instruct-GGUF/resolve/main/Phi-3.1-mini-128k-instruct-Q4_K_M.gguf'}
+ ,{id:'phi4',name:'Microsoft Phi-4 mini',size:'~2.5 GB',url:HF+'bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf'}
+];
+const CFG={'single-thread/wllama.wasm':'./wllama/single-thread/wllama.wasm','multi-thread/wllama.wasm':'./wllama/multi-thread/wllama.wasm'};
+const ERR='AI not Download,,and not wifi have!';
+const $=s=>document.querySelector(s), chat=$('#chat'), box=$('#models');
+let w=null,cur=null,busy=false,loadingId=null,hist=[];
+const flag=id=>localStorage.getItem('dl_'+id)==='1';
+function add(c,t){const d=document.createElement('div');d.className='b '+c;d.textContent=t;chat.append(d);chat.scrollTop=chat.scrollHeight;return d}
+function render(){
+ box.innerHTML='';
+ for(const m of MODELS){
+  const d=document.createElement('div');d.className='m'+(cur&&cur.id===m.id?' on':'');
+  const st=cur&&cur.id===m.id?'✓ hazırdır':loadingId===m.id?'yüklənir...':flag(m.id)?'yüklənib (oflayn)':'yüklə • '+m.size;
+  d.innerHTML=`<b>${m.name}</b><small id="s_${m.id}">${st}</small><div class="bar"><i id="p_${m.id}"></i></div>`;
+  d.onclick=()=>pick(m);box.append(d);
+ }
+}
+async function pick(m){
+ if(busy||(cur&&cur.id===m.id))return;
+ const had=flag(m.id);
+ if(!had&&!navigator.onLine){add('e',ERR);return}
+ busy=true;loadingId=m.id;
+ try{if(w){await w.exit()}}catch(e){}
+ w=null;cur=null;render();
+ try{
+  w=new Wllama(CFG);
+  await w.loadModelFromUrl(m.url,{n_ctx:2048,allowOffline:true,
+   progressCallback:({loaded,total})=>{
+    const p=total?Math.round(loaded/total*100):0;
+    $('#p_'+m.id).style.width=p+'%';$('#s_'+m.id).textContent=(had?'yüklənir ':'endirilir ')+p+'%';
+   }});
+  localStorage.setItem('dl_'+m.id,'1');cur=m;hist=[];
+  add('a',m.name+' hazırdır.');
+ }catch(e){
+  w=null;cur=null;
+  if(!navigator.onLine){localStorage.removeItem('dl_'+m.id);add('e',ERR)}
+  else add('e','Error: '+(e&&e.message||e));
+ }
+ busy=false;loadingId=null;render();
+}
+$('form').onsubmit=async ev=>{
+ ev.preventDefault();
+ const i=$('#msg'),t=i.value.trim();
+ if(!t||busy)return;
+ if(!cur){add('e','Əvvəlcə bir model seç.');return}
+ let q=t,url=null;
+ if(pic){
+  const sb=add('a','Şəkil oxunur'+(flag('cap')?'...':' (ilk dəfə ~350 MB endirilir)...'));busy=true;
+  try{url=URL.createObjectURL(pic);q='[Şəkildə: '+await capIt(url)+'] '+t;sb.remove()}
+  catch(x){busy=false;sb.className='b e';sb.textContent=x.message==='NOCAP'?ERR:'Error: '+(x.message||x);return}
+  busy=false;
+ }
+ i.value='';
+ const ub=add('u',t);
+ if(url){const im=document.createElement('img');im.src=url;im.style.cssText='max-width:100%;border-radius:8px;display:block;margin-bottom:6px';ub.prepend(im)}
+ pic=null;$('#file').value='';$('#prev').textContent='';
+ hist.push({role:'user',content:q});
+ if(hist.length>8)hist=hist.slice(-8);
+ const b=add('a','...');busy=true;
+ try{
+  const r=await w.createChatCompletion(hist,{nPredict:512,sampling:{temp:0.7},
+   onNewToken:(tk,pc,text)=>{b.textContent=text;chat.scrollTop=chat.scrollHeight}});
+  b.textContent=r;hist.push({role:'assistant',content:r});
+ }catch(e){b.className='b e';b.textContent='Error: '+(e&&e.message||e)}
+ busy=false;
+};
+navigator.storage&&navigator.storage.persist&&navigator.storage.persist();
+function tab(n){
+ $('#t1').className=n==1?'on':'';$('#t2').className=n==2?'on':'';
+ for(const e of [$('#models'),$('#chat'),$('form'),$('#prev')])e.style.display=n==1?'':'none';
+ $('#img').style.display=n==2?'block':'none';
+}
+$('#t1').onclick=()=>tab(1);$('#t2').onclick=()=>tab(2);
+
+// ---- sekil -> AI (sekil tesvirini yerli model yazir, istenilen AI-a metn kimi gedir)
+let pic=null,TF=null,cap=null;
+$('#file').onchange=e=>{pic=e.target.files[0]||null;$('#prev').textContent=pic?'📷 '+pic.name:''};
+async function loadTF(){
+ if(!TF){TF=await import('./tfjs/transformers.min.js');TF.env.allowLocalModels=false;TF.env.backends.onnx.wasm.wasmPaths='./tfjs/';TF.env.backends.onnx.wasm.numThreads=1}
+ return TF;
+}
+async function capIt(url){
+ if(!flag('cap')&&!navigator.onLine)throw new Error('NOCAP');
+ try{
+  const T=await loadTF();
+  if(!cap){cap=await T.pipeline('image-to-text','Xenova/vit-gpt2-image-captioning');localStorage.setItem('dl_cap','1')}
+  const r=await cap(url);return r[0].generated_text;
+ }catch(e){if(!navigator.onLine)throw new Error('NOCAP');throw e}
+}
+
+// ---- yazidan sekil (SD-Turbo, WebGPU)
+const SD=HF+'schmuell/sd-turbo-ort-web/resolve/main/';
+const SDF=['text_encoder/model.onnx','unet/model.onnx','vae_decoder/model.onnx'];
+let ortP=null,sess={},tok=null;
+const st=m=>{$('#is').textContent=m};
+const f32=new Float32Array(1),u32=new Uint32Array(f32.buffer);
+function toH(x){f32[0]=x;const b=u32[0],s=(b>>>16)&0x8000,e=((b>>>23)&255)-112;if(e<=0)return s;if(e>=31)return s|0x7c00;return s|(e<<10)|((b>>>13)&0x3ff)}
+function fromH(h){const e=(h>>10)&31,m=h&1023,g=h&0x8000?-1:1;return e===0?g*m*5.960464477539063e-8:e===31?(m?NaN:g*Infinity):g*Math.pow(2,e-15)*(1+m/1024)}
+const toF=t=>t.type==='float16'?Float32Array.from(t.data,v=>fromH(v)):t.data;
+const randn=()=>Math.sqrt(-2*Math.log(1-Math.random()))*Math.cos(2*Math.PI*Math.random());
+function loadOrt(){
+ return ortP||(ortP=new Promise((ok,no)=>{
+  const s=document.createElement('script');s.src='./ort/ort.webgpu.min.js';
+  s.onload=()=>{ort.env.wasm.wasmPaths='./ort/';ort.env.wasm.numThreads=1;ok()};
+  s.onerror=()=>no(new Error('ort yüklənmədi'));document.head.append(s);
+ }));
+}
+async function getFile(idx){
+ const c=await caches.open('sd-turbo'),u=SD+SDF[idx];
+ let r=await c.match(u);
+ if(!r){
+  if(!navigator.onLine)throw new Error('NODL');
+  const n=await fetch(u);if(!n.ok)throw new Error('HTTP '+n.status);
+  const len=+n.headers.get('content-length')||0;let got=0;
+  const ts=new TransformStream({transform(ch,ct){
+   got+=ch.byteLength;
+   $('#ibar').style.width=((idx+(len?got/len:0))/3*100)+'%';
+   st('Endirilir: '+SDF[idx].split('/')[0]+' '+Math.round(got/1048576)+' MB');
+   ct.enqueue(ch);
+  }});
+  await c.put(u,new Response(n.body.pipeThrough(ts)));
+  r=await c.match(u);
+ }
+ return new Uint8Array(await r.arrayBuffer());
+}
+async function mkSess(i,O){const b=await getFile(i);st('Model yüklənir: '+SDF[i].split('/')[0]+'...');return ort.InferenceSession.create(b,O)}
+async function gen(){
+ const p=$('#ip').value.trim();
+ if(busy||!p)return;
+ const is=$('#is');is.className='st';
+ if(!flag('sd')&&!navigator.onLine){is.className='st e';st(ERR);return}
+ if(!navigator.gpu){is.className='st e';st('Bu telefon WebGPU dəstəkləmir.');return}
+ busy=true;$('#ib').disabled=true;
+ try{
+  await loadOrt();const T=await loadTF();
+  const O={executionProviders:['webgpu'],enableMemPattern:false,enableCpuMemArena:false,
+   freeDimensionOverrides:{batch_size:1,num_channels:4,height:64,width:64,sequence_length:77}};
+  st('Yazı hazırlanır...');
+  if(!tok)tok=await T.AutoTokenizer.from_pretrained('Xenova/clip-vit-base-patch16');
+  let ids=Array.from((await tok(p,{padding:false,truncation:true,max_length:77,return_tensor:false})).input_ids).map(Number).slice(0,77);
+  while(ids.length<77)ids.push(49407);
+  const enc=await mkSess(0,O);
+  const hs=(await enc.run({input_ids:new ort.Tensor('int32',Int32Array.from(ids),[1,77])})).last_hidden_state;
+  const dt=hs.type;await enc.release();
+  const mk=(a,d)=>dt==='float16'?new ort.Tensor('float16',Uint16Array.from(a,v=>toH(v)),d):new ort.Tensor('float32',a,d);
+  const S=14.6146,n=4*64*64,sc=Math.sqrt(S*S+1),lat=new Float32Array(n),inp=new Float32Array(n);
+  for(let k=0;k<n;k++){lat[k]=randn()*S;inp[k]=lat[k]/sc}
+  if(!sess[1])sess[1]=await mkSess(1,O);
+  st('Şəkil çəkilir...');
+  const o=await sess[1].run({sample:mk(inp,[1,4,64,64]),timestep:new ort.Tensor('int64',BigInt64Array.from([999n]),[1]),encoder_hidden_states:hs});
+  const eps=toF(o.out_sample),x0=new Float32Array(n);
+  for(let k=0;k<n;k++)x0[k]=(lat[k]-S*eps[k])/0.18215;
+  if(!sess[2])sess[2]=await mkSess(2,O);
+  const px=toF((await sess[2].run({latent_sample:mk(x0,[1,4,64,64])})).sample);
+  const cx=$('#cv').getContext('2d'),im=cx.createImageData(512,512),Z=512*512;
+  for(let k=0;k<Z;k++){for(let c=0;c<3;c++)im.data[k*4+c]=Math.max(0,Math.min(1,px[c*Z+k]/2+.5))*255;im.data[k*4+3]=255}
+  cx.putImageData(im,0,0);
+  localStorage.setItem('dl_sd','1');st('Hazırdır ✓');$('#ibar').style.width='100%';
+ }catch(e){
+  is.className='st e';
+  if(e.message==='NODL'||!navigator.onLine){localStorage.removeItem('dl_sd');st(ERR)}else st('Error: '+(e&&e.message||e));
+ }
+ busy=false;$('#ib').disabled=false;
+}
+$('#ib').onclick=gen;
+render();
+</script>
+</body></html>
