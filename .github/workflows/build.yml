@@ -1,0 +1,228 @@
+name: Build aiofflinE APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.5'
+
+      - name: Generate Android project
+        run: |
+          set -e
+          test -f index.html || { echo "index.html tapilmadi"; exit 1; }
+          test -f logo.jpg || { echo "logo.jpg tapilmadi"; exit 1; }
+          sudo apt-get install -y imagemagick > /dev/null
+          P=$PWD/proj
+          J=$P/app/src/main/java/com/aioffline/app
+          A=$P/app/src/main/assets
+          R=$P/app/src/main/res
+          mkdir -p $J $A
+
+          cp index.html $A/index.html
+
+          # wllama (llama.cpp WASM) - APK icine qoyulur ki, internetsiz isleyi
+          mkdir -p $P/node && cd $P/node
+          npm init -y > /dev/null
+          npm install "@wllama/wllama@^2" "onnxruntime-web@1.20.1" "@xenova/transformers@2.17.2"
+          cd $GITHUB_WORKSPACE
+          test -f $P/node/node_modules/@wllama/wllama/esm/index.js
+          cp -r $P/node/node_modules/@wllama/wllama/esm $A/wllama
+
+          # sekil cekmek ucun onnxruntime-web (WebGPU)
+          N=$P/node/node_modules
+          mkdir -p $A/ort $A/tfjs
+          test -f $N/onnxruntime-web/dist/ort.webgpu.min.js
+          cp $N/onnxruntime-web/dist/ort.webgpu.min.js $A/ort/
+          cp $N/onnxruntime-web/dist/*jsep* $A/ort/
+
+          # sekil -> metn (transformers.js) + onun wasm fayllari
+          test -f $N/@xenova/transformers/dist/transformers.min.js
+          cp $N/@xenova/transformers/dist/transformers.min.js $A/tfjs/
+          W=$N/@xenova/transformers/node_modules/onnxruntime-web/dist
+          test -d $W || W=$N/onnxruntime-web/dist
+          cp $W/*.wasm $A/tfjs/
+
+          # logo.jpg -> kvadrat APK ikonlari
+          for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
+            n=${d%%:*}; s=${d##*:}
+            mkdir -p $R/mipmap-$n
+            convert logo.jpg -resize ${s}x${s}^ -gravity center -extent ${s}x${s} $R/mipmap-$n/ic_launcher.png
+          done
+
+          cat > $P/settings.gradle <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories { google(); mavenCentral() }
+          }
+          rootProject.name = 'aiofflinE'
+          include ':app'
+          EOF
+
+          cat > $P/build.gradle <<'EOF'
+          plugins { id 'com.android.application' version '8.2.2' apply false }
+          EOF
+
+          cat > $P/gradle.properties <<'EOF'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2g
+          EOF
+
+          cat > $P/app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+            namespace 'com.aioffline.app'
+            compileSdk 34
+            defaultConfig {
+              applicationId 'com.aioffline.app'
+              minSdk 24
+              targetSdk 34
+              versionCode 2
+              versionName '1.1'
+            }
+            compileOptions {
+              sourceCompatibility JavaVersion.VERSION_17
+              targetCompatibility JavaVersion.VERSION_17
+            }
+          }
+          dependencies { implementation 'androidx.webkit:webkit:1.8.0' }
+          EOF
+
+          cat > $P/app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.INTERNET"/>
+            <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+            <application
+              android:label="aiofflinE"
+              android:icon="@mipmap/ic_launcher"
+              android:largeHeap="true"
+              android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+              <activity
+                android:name=".MainActivity"
+                android:exported="true"
+                android:configChanges="orientation|screenSize|keyboardHidden"
+                android:windowSoftInputMode="adjustResize">
+                <intent-filter>
+                  <action android:name="android.intent.action.MAIN"/>
+                  <category android:name="android.intent.category.LAUNCHER"/>
+                </intent-filter>
+              </activity>
+            </application>
+          </manifest>
+          EOF
+
+          cat > $J/MainActivity.java <<'EOF'
+          package com.aioffline.app;
+
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.webkit.ValueCallback;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebResourceResponse;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import androidx.webkit.WebViewAssetLoader;
+
+          public class MainActivity extends Activity {
+            private WebView wv;
+            private ValueCallback<Uri[]> fcb;
+
+            @Override
+            protected void onCreate(Bundle b) {
+              super.onCreate(b);
+              wv = new WebView(this);
+              wv.setBackgroundColor(0xFF0D0F0E);
+              setContentView(wv);
+              WebSettings s = wv.getSettings();
+              s.setJavaScriptEnabled(true);
+              s.setDomStorageEnabled(true);
+              s.setDatabaseEnabled(true);
+              final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
+                .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+                .build();
+              wv.setWebViewClient(new WebViewClient() {
+                @Override
+                public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
+                  Uri u = r.getUrl();
+                  WebResourceResponse res = loader.shouldInterceptRequest(u);
+                  if (res != null) {
+                    String p = u.getPath() == null ? "" : u.getPath();
+                    if (p.endsWith(".js") || p.endsWith(".mjs")) res.setMimeType("text/javascript");
+                    else if (p.endsWith(".wasm")) res.setMimeType("application/wasm");
+                  }
+                  return res;
+                }
+              });
+              wv.setWebChromeClient(new WebChromeClient() {
+                @Override
+                public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
+                  if (fcb != null) fcb.onReceiveValue(null);
+                  fcb = cb;
+                  try {
+                    startActivityForResult(p.createIntent(), 1);
+                  } catch (Exception e) {
+                    fcb = null;
+                    return false;
+                  }
+                  return true;
+                }
+              });
+              wv.loadUrl("https://appassets.androidplatform.net/assets/index.html");
+            }
+
+            @Override
+            protected void onActivityResult(int rq, int rs, Intent d) {
+              if (rq == 1 && fcb != null) {
+                fcb.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(rs, d));
+                fcb = null;
+              } else {
+                super.onActivityResult(rq, rs, d);
+              }
+            }
+          }
+          EOF
+
+      - name: Build APK
+        run: |
+          cd proj
+          gradle assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../aiofflinEV1.1.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aiofflinEV1.1
+          path: aiofflinEV1.1.apk
+
+      - name: Release V1.1
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: V1.1
+          name: aiofflinE V1.1
+          files: aiofflinEV1.1.apk
+          
